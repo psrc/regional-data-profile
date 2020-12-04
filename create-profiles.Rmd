@@ -1,0 +1,153 @@
+---
+title: "Regional Data Profiles"
+output: 
+  html_document:
+    theme: cerulean
+    toc: false
+    toc_float: false
+    number_sections: false
+---
+
+This code pulls data from the Central Database (aka Elmer) and creates graphics and tables for the Regional Data Profile Pages.
+```{r setup, include=FALSE}
+
+# Data Processing and Wrangling
+library(dplyr)
+library(lubridate)
+
+# Database Connection
+library(odbc)
+library(DBI)
+
+# Plotting Libraries
+library(ggplot2)
+library(scales)
+library(plotly)
+
+# Custom Colors
+psrc_colors <- c(
+  "CoastRhodo" = "#91268F",
+  "CedarShake" = "#F05A28",
+  "DouglasFirShoot" = "#8CC63E",    
+  "FerryWake" = "#00A7A0",
+  "DarkGrey" = "#76787A",    
+  "LightGrey" = "#BBBDC0",
+  "King County" = "#AD5CAB",
+  "Kitsap County" = "#F4835E",
+  "Pierce County" = "#A9D46E",
+  "Snohomish County" = "#40BDB8",
+  "Historical" = "#76787A",
+  "Forecast" = "#AD5CAB"
+)
+
+pop_colors <- c(
+  "Historical" = "#76787A",
+  "Forecast" = "#AD5CAB"
+)
+
+hh_colors <- c(
+  "Historical" = "#76787A",
+  "Forecast" = "#F4835E"
+)
+
+# SQL Database Connection settings
+elmer_connection <- dbConnect(odbc::odbc(),
+  driver = "SQL Server",
+  server = "AWS-PROD-SQL\\Sockeye",
+  database = "Elmer",
+  trusted_connection = "yes"
+  )
+
+# Macro-forecast Tables
+macro_pop_facts<- "Macroeconomic.pop_facts"
+macro_pop_dims<- "Macroeconomic.pop_group_dims"
+
+macro_hh_facts<- "Macroeconomic.household_facts"
+
+initial_forecast_year <- 2020
+
+```
+
+``` {r useful_functions, include = FALSE}
+
+create_plot <- function(w_data, w_fill, w_y, w_x, bar_type, label_type, w_colors) {
+  w_chart <- ggplot(data=w_data, aes(fill=get(w_fill), y=get(w_y), x=get(w_x))) +
+                    geom_bar(position=bar_type, stat="identity") +
+                    scale_fill_manual(values= w_colors) +
+                    scale_y_continuous(labels = label_type) +
+                    theme_light() +
+                      theme(
+                        axis.text=element_text(size=10),
+                        axis.text.x.bottom=element_text(size=10),
+                        axis.title.y = element_blank(),
+                        axis.title.x = element_blank(),
+                        panel.grid.major = element_line(colour="#BBBDC0",size = 0.25),
+                        panel.grid.minor = element_line(colour="#BBBDC0",size = 0.25),
+                        panel.border = element_blank(),
+                        axis.line = element_blank(),
+                        legend.position="bottom",
+                        legend.title = element_blank())
+  return(w_chart)
+}
+
+```
+
+``` {r macro_forecast_data, include = FALSE}
+
+forecast_years <- c(2010,2015,2020,2025,2030,2035,2040,2045,2050)
+
+# Pull data from Elmer and store as a tibble for use in dplyr
+forecasted_population_data <- as_tibble(dbReadTable(elmer_connection,SQL(macro_pop_facts)))
+forecasted_population_dims <- as_tibble(dbReadTable(elmer_connection,SQL(macro_pop_dims)))
+forecasted_household_data <- as_tibble(dbReadTable(elmer_connection,SQL(macro_hh_facts)))
+
+# Add Age Group Detail to the Population Table and trim down the final table
+forecasted_population_data <- inner_join(forecasted_population_data, forecasted_population_dims, by="pop_group_dim_id") %>%
+  select(data_year,population,group_name)
+
+total_population <- forecasted_population_data %>%
+  filter(group_name == "Total") %>%
+  filter(data_year %in% forecast_years) %>%
+  mutate(group_name=replace(group_name, forecast_years<initial_forecast_year, "Historical")) %>%
+  mutate(group_name=replace(group_name, forecast_years>=initial_forecast_year, "Forecast"))
+
+total_households <- forecasted_household_data %>%
+  select(data_year,households,dataset_dim_id) %>%
+  filter(data_year %in% forecast_years) %>%
+  mutate(dataset_dim_id=replace(dataset_dim_id, forecast_years<initial_forecast_year, "Historical")) %>%
+  mutate(dataset_dim_id=replace(dataset_dim_id, forecast_years>=initial_forecast_year, "Forecast"))
+
+# Remove objects that are no longer needed from memory
+rm("forecasted_population_dims") 
+
+```
+
+# Forecast Population & Households {.tabset .tabset.fade .tabset-pills}
+PSRC forecasts the region's households, persons, jobs, and other economic and demographic variables through the year 2050.
+
+The Macroeconomic Forecast is an input to PSRC's land use and travel forecasting, and provides the growth assumptions used in our regional growth strategy. It is developed by PSRC with help and review by technical staff from state and local government. The Macroeconomic Forecast is the resource behind the forecasts of regional population and households shown below. For more information on the Macroeconomic Forecst, please click [here](https://www.psrc.org/regional-macroeconomic-forecast).
+
+## Population
+
+``` {r pop_forecast_chart, echo = FALSE}
+
+pop_chart <- create_plot(total_population, "group_name", "population", "data_year", "dodge", scales::comma, pop_colors)
+pop_chart
+
+```
+
+## Households
+
+``` {r hh_forecast_chart, echo = FALSE}
+
+hh_chart <- create_plot(total_households, "dataset_dim_id", "households", "data_year", "dodge", scales::comma, hh_colors)
+hh_chart
+
+```
+
+``` {r final_cleanup, include = FALSE}
+
+# Disconnect from Elmer
+odbc::dbDisconnect(elmer_connection)
+
+```
