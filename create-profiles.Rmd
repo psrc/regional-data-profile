@@ -50,6 +50,13 @@ hh_colors <- c(
   "Forecast" = "#F4835E"
 )
 
+age_colors <- c(
+  "0-4" = "#AD5CAB",
+  "5-19" = "#F4835E",
+  "20-64" = "#A9D46E",
+  "65+" = "#40BDB8"
+)
+
 # SQL Database Connection settings
 elmer_connection <- dbConnect(odbc::odbc(),
   driver = "SQL Server",
@@ -70,8 +77,8 @@ initial_forecast_year <- 2020
 
 ``` {r useful_functions, include = FALSE}
 
-create_plot <- function(w_data, w_fill, w_y, w_x, bar_type, label_type, w_colors) {
-  w_chart <- ggplot(data=w_data, aes(fill=get(w_fill), y=get(w_y), x=get(w_x))) +
+create_plot <- function(w_data, w_fill, w_y, w_x, bar_type, label_type, w_colors, w_factor, w_dec, w_suff) {
+  w_chart <- ggplotly(ggplot(data=w_data, aes(fill=get(w_fill), y=get(w_y), x=get(w_x),text=paste0(get(w_fill), ": ",prettyNum(round(get(w_y)*w_factor, w_dec), big.mark = ","),w_suff))) +
                     geom_bar(position=bar_type, stat="identity") +
                     scale_fill_manual(values= w_colors) +
                     scale_y_continuous(labels = label_type) +
@@ -87,6 +94,7 @@ create_plot <- function(w_data, w_fill, w_y, w_x, bar_type, label_type, w_colors
                         axis.line = element_blank(),
                         legend.position="bottom",
                         legend.title = element_blank())
+                    ,tooltip = c("text")) %>% layout(hovermode = "x")
   return(w_chart)
 }
 
@@ -117,6 +125,21 @@ total_households <- forecasted_household_data %>%
   mutate(dataset_dim_id=replace(dataset_dim_id, forecast_years<initial_forecast_year, "Historical")) %>%
   mutate(dataset_dim_id=replace(dataset_dim_id, forecast_years>=initial_forecast_year, "Forecast"))
 
+population_by_age <- forecasted_population_data %>%
+  filter(group_name != "Total") %>%
+  filter(group_name != "InHouseholds") %>%
+  filter(group_name != "InGroupQuarters") %>%
+  filter(data_year %in% forecast_years)
+  
+population_by_age <- inner_join(population_by_age, total_population, by="data_year") %>%
+  mutate(population_share = population.x / population.y) %>%
+  rename(group_name = group_name.x) %>%
+  select(data_year, population_share, group_name) %>%
+  mutate(group_name=replace(group_name, group_name=="0_4", "0-4")) %>%
+  mutate(group_name=replace(group_name, group_name=="5_19", "5-19")) %>%
+  mutate(group_name=replace(group_name, group_name=="20_64", "20-64")) %>%
+  mutate(group_name=replace(group_name, group_name=="65", "65+"))
+
 # Remove objects that are no longer needed from memory
 rm("forecasted_population_dims") 
 
@@ -131,8 +154,17 @@ The Macroeconomic Forecast is an input to PSRC's land use and travel forecasting
 
 ``` {r pop_forecast_chart, echo = FALSE}
 
-pop_chart <- create_plot(total_population, "group_name", "population", "data_year", "dodge", scales::comma, pop_colors)
+pop_chart <- create_plot(total_population, "group_name", "population", "data_year", "dodge", scales::comma, pop_colors, 1, -2, "")
 pop_chart
+
+```
+
+## Age Composition
+
+``` {r pop_age_forecast_chart, echo = FALSE}
+
+age_chart <- create_plot(population_by_age, "group_name", "population_share", "data_year", "stack", scales::percent, age_colors, 100, 1, "%")
+age_chart
 
 ```
 
@@ -140,7 +172,7 @@ pop_chart
 
 ``` {r hh_forecast_chart, echo = FALSE}
 
-hh_chart <- create_plot(total_households, "dataset_dim_id", "households", "data_year", "dodge", scales::comma, hh_colors)
+hh_chart <- create_plot(total_households, "dataset_dim_id", "households", "data_year", "dodge", scales::comma, hh_colors, 1, -2, "")
 hh_chart
 
 ```
